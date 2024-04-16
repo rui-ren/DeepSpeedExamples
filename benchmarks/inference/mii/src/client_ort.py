@@ -30,45 +30,6 @@ except ImportError:
     from utils import parse_args, print_summary, get_args_product, CLIENT_PARAMS
 
 
-def call_fastgen(
-    input_tokens: str, max_new_tokens: int, args: argparse.Namespace
-) -> ResponseDetails:
-    import mii
-
-    client = mii.client(args.deployment_name)
-
-    output_tokens = []
-    token_gen_time = []
-    time_last_token = 0
-
-    def callback(response):
-        nonlocal time_last_token
-        # print(f"Received: {response[0].generated_text} time_last_token={time_last_token}")
-        output_tokens.append(response[0].generated_text)
-        time_now = time.time()
-        token_gen_time.append(time_now - time_last_token)
-        time_last_token = time_now
-
-    time_last_token = start_time = time.time()
-    token_gen_time = []
-    if args.stream:
-        output_tokens = []
-        client.generate(
-            input_tokens, max_new_tokens=max_new_tokens, streaming_fn=callback
-        )
-    else:
-        result = client.generate(input_tokens, max_new_tokens=max_new_tokens)
-        output_tokens = result[0].generated_text
-
-    return ResponseDetails(
-        generated_tokens=output_tokens,
-        prompt=input_tokens,
-        start_time=start_time,
-        end_time=time.time(),
-        model_time=0,
-        token_gen_time=token_gen_time,
-    )
-
 
 def call_vllm(
     input_tokens: str, max_new_tokens: int, args: argparse.Namespace
@@ -77,7 +38,13 @@ def call_vllm(
         raise NotImplementedError("Not implemented for non-streaming")
 
     api_url = "http://localhost:8000/generate"
-    headers = {"User-Agent": "Benchmark Client"}
+
+    headers = {
+        "User-Agent": "Benchmark Client",
+        "Accept": "text/event-stream",
+        "Content-Type": "application/json"
+    }
+
     pload = {
         "prompt": input_tokens,
         "n": 1,
@@ -120,68 +87,6 @@ def call_vllm(
     for h, t in get_streaming_response(response, start_time):
         output = h
         token_gen_time.append(t)
-
-    return ResponseDetails(
-        generated_tokens=output,
-        prompt=input_tokens,
-        start_time=start_time,
-        end_time=time.time(),
-        model_time=0,
-        token_gen_time=token_gen_time,
-    )
-
-
-def call_aml(
-    input_tokens: str,
-    max_new_tokens: int,
-    args: argparse.Namespace,
-    start_time: Union[None, float] = None,
-) -> ResponseDetails:
-    if args.stream:
-        raise NotImplementedError("Not implemented for streaming")
-
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": ("Bearer " + args.aml_api_key),
-        "azureml-model-deployment": args.deployment_name,
-    }
-    pload = {
-        "input_data": {
-            "input_string": [
-                input_tokens,
-            ],
-            "parameters": {
-                "max_tokens": max_new_tokens,
-                "return_full_text": False,
-            },
-        }
-    }
-
-    def get_response(response: requests.Response) -> List[str]:
-        data = json.loads(response.content)
-        try:
-            output = data[0]["0"]
-        except (KeyError, TypeError):
-            try:
-                output = data[0]
-            except (KeyError, TypeError):
-                output = data
-        return output
-
-    token_gen_time = []
-    response = None
-    if start_time is None:
-        start_time = time.time()
-    while True:
-        try: # Sometimes the AML endpoint will return an error, so we send the request again
-            response = requests.post(args.aml_api_url, headers=headers, json=pload, timeout=180)
-            output = get_response(response)
-            break
-        except Exception as e:
-            print(f"Connection failed with {e}. Retrying AML request")
-            # make sure response exist before we call it
-            if response:
-                print(f"{response.status_code}:{response.content}")
 
     return ResponseDetails(
         generated_tokens=output,

@@ -76,7 +76,7 @@ def call_vllm(
     if not args.stream:
         raise NotImplementedError("Not implemented for non-streaming")
 
-    api_url = "http://localhost:26500/generate"
+    api_url = "http://localhost:8000/generate"
     headers = {"User-Agent": "Benchmark Client"}
     pload = {
         "prompt": input_tokens,
